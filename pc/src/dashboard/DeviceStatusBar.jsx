@@ -54,10 +54,11 @@ export default function DeviceStatusBar() {
   const usbOnlyBindingMatch = legacyTransportLabel.match(/^USB\((.+)\)$/);
   const savedUsbPortName = usbOnlyBindingMatch?.[1] || "";
   const usbPortLabel = usb.connected ? usb.portName || savedUsbPortName || "已连接" : "未连接";
+  const virtualDevice = usb.connected && String(usb.portName || "").startsWith("virtual-device-");
   const usbChip = {
     className: `dashboard-status-bar__chip dashboard-status-bar__chip--${usb.connected ? "ok" : "warn"}`,
     icon: <Usb size={14} />,
-    label: usb.connected ? "USB 直连" : "USB 未连接",
+    label: virtualDevice ? "虚拟设备" : usb.connected ? "USB 直连" : "USB 未连接",
   };
   return (
     <div className="dashboard-status-bar">

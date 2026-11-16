@@ -50,6 +50,8 @@
           "load_llm_network_settings",
           "save_llm_network_settings",
           "test_llm_network_settings",
+          "load_virtual_device_settings",
+          "save_virtual_device_settings",
           "wifi_get_status",
           "wifi_connect_ap",
           "wifi_restore",

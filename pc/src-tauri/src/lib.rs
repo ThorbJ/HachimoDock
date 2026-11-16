@@ -130,6 +130,7 @@ mod miot_protocol;
 mod smart_home;
 mod smart_home_credentials;
 mod llm_network;
+mod virtual_device_settings;
 mod generation_diagnostics;
 mod generation_http;
 #[cfg(test)]
@@ -11539,6 +11540,8 @@ pub fn run() {
                 .map_err(std::io::Error::other)?;
             llm_network::configure_storage_dir(app.path().app_data_dir()?)
                 .map_err(std::io::Error::other)?;
+            // Optional loopback link for a browser-hosted virtual device; off unless enabled.
+            virtual_device_settings::configure(app.path().app_data_dir()?, &usb_for_auto);
             if let Ok(dir) = app.path().app_log_dir() { generation_diagnostics::configure(dir); }
             if let Err(error) = stock_quotes::configure(app.path().app_data_dir()?) {
                 eprintln!("[stocks] {error}");
@@ -11636,6 +11639,8 @@ pub fn run() {
             llm_network::load_llm_network_settings,
             llm_network::save_llm_network_settings,
             llm_network::test_llm_network_settings,
+            virtual_device_settings::load_virtual_device_settings,
+            virtual_device_settings::save_virtual_device_settings,
             wifi_get_status,
             wifi_connect_ap,
             wifi_restore,

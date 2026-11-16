@@ -22,6 +22,7 @@ import {
 import PageShell from "./shell/PageShell.jsx";
 import Card from "./shell/Card.jsx";
 import LlmNetworkSettings from "./LlmNetworkSettings.jsx";
+import VirtualDeviceSettings from "./VirtualDeviceSettings.jsx";
 import GenerationDiagnostics from "./GenerationDiagnostics.jsx";
 import TextModelSelect from "./TextModelSelect.jsx";
 import ImageModelSelect from "./ImageModelSelect.jsx";
@@ -617,6 +618,7 @@ export default function ApiSettings({ onBack, configReadError = "", active = tru
           })}
         </div>
       </Card>
+      <VirtualDeviceSettings />
     </PageShell>
     </div>
   );

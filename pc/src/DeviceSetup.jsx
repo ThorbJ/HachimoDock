@@ -115,7 +115,7 @@ export default function DeviceSetup({ onComplete } = {}) {
         if (mountedRef.current) {
           setDevice(null);
           setPhase("waiting");
-          setMessage("暂未检测到桌宠，请确认设备已开机并连接数据线。");
+          setMessage("暂未检测到桌宠，请确认设备已开机并连接数据线。使用网页虚拟设备时，请在「设置 → 虚拟设备」中开启连接。");
         }
       } catch (error) {
         if (mountedRef.current) {

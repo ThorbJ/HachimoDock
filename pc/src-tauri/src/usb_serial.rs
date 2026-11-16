@@ -62,6 +62,9 @@ use std::time::{Duration, Instant};
 mod appearance_transaction;
 mod appearance_recovery;
 mod connection_handle;
+pub mod virtual_device;
+#[cfg(test)]
+mod virtual_device_tests;
 mod live_audio_pacing;
 mod media_arbitration;
 mod master_volume;
@@ -1695,6 +1698,8 @@ pub struct UsbSerialManager {
     firmware_ack_waiters: Arc<Mutex<Vec<FirmwareAckWaiter>>>,
     firmware_status_waiters: Arc<Mutex<Vec<FirmwareStatusWaiter>>>,
     device_response_waiters: Arc<Mutex<Vec<DeviceResponseWaiter>>>,
+    // Optional loopback WebSocket link for a browser-hosted virtual device.
+    virtual_devices: Arc<virtual_device::Host>,
 }
 fn component_sync_media_blocks(state:&str)->bool{
     matches!(state,"playing"|"buffering"|"preparing"|"paused"|"ended")
@@ -2114,6 +2119,7 @@ impl UsbSerialManager {
             firmware_ack_waiters: Arc::new(Mutex::new(Vec::new())),
             firmware_status_waiters: Arc::new(Mutex::new(Vec::new())),
             device_response_waiters: Arc::new(Mutex::new(Vec::new())),
+            virtual_devices: Arc::new(virtual_device::Host::default()),
         }
     }
 
@@ -2220,8 +2226,23 @@ impl UsbSerialManager {
                 }
                 None
             })
-            .collect();
-        prioritize_usb_serial_devices(devices)
+            .collect::<Vec<_>>();
+        // A connected virtual device is listed after physical ports and probed the same way.
+        let mut devices = prioritize_usb_serial_devices(devices);
+        devices.extend(self.virtual_devices.devices());
+        devices
+    }
+
+    /// Start (Some) or stop (None) the optional virtual device listener on 127.0.0.1.
+    pub fn apply_virtual_device_config(
+        &self,
+        config: Option<virtual_device::Config>,
+    ) -> Result<Option<std::net::SocketAddr>, String> {
+        self.virtual_devices.apply(config)
+    }
+
+    pub fn virtual_device_status(&self) -> virtual_device::Status {
+        self.virtual_devices.status()
     }
 
     /// Connect to a USB serial device
@@ -2307,8 +2328,14 @@ impl UsbSerialManager {
             .lock()
             .map(|value| value.clone())
             .unwrap_or_default();
+        let probed = if virtual_device::is_virtual_port(port_name) {
+            probe_serial_port_with(port_name, &baud_candidates, &desktop_id, probe_timeout, p4_bridge,
+                |name, baud| self.virtual_devices.open(name, baud), |port, baud| port.set_baud_rate(baud))
+        } else {
+            probe_serial_port(port_name, &baud_candidates, &desktop_id, probe_timeout, p4_bridge)
+        };
         let probed =
-            match probe_serial_port(port_name, &baud_candidates, &desktop_id, probe_timeout, p4_bridge) {
+            match probed {
                 Ok(probed) => probed,
                 Err(error) => {
                     transfer_log::record(
