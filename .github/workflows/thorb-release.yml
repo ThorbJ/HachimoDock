@@ -81,6 +81,8 @@ jobs:
           {
             echo "PET_MANAGER_NODE_BIN=$(native "$rt/$node_bin")"
             echo "PET_MANAGER_FFMPEG_BIN=$(native "$rt/$ffmpeg_bin")"
+            # The same audited FFmpeg also probes the built-in clips at build time.
+            echo "PET_MANAGER_BUILD_FFMPEG_BIN=$(native "$rt/$ffmpeg_bin")"
             echo "PET_MANAGER_FFMPEG_README=$(native "$rt/ffmpeg.README")"
             echo "PET_MANAGER_FFMPEG_LICENSE=$(native "$rt/ffmpeg.LICENSE")"
             echo "PET_MANAGER_FFMPEG_SOURCE_ARCHIVE=$(native "$rt/FFmpeg-8.1.2-source.tar.xz")"
