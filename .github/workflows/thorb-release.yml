@@ -1,0 +1,155 @@
+# Thorb fork only (branch thorb-release; never part of the upstream PR).
+# Builds unofficial macOS (arm64) and Windows (x64) installers of HachimiDock with the
+# virtual device connection. Push to thorb-release = installers as workflow artifacts;
+# push a tag thorb-v* = also a GitHub prerelease whose notes say "Thorb fork, unofficial".
+name: Thorb fork installers
+on:
+  push:
+    branches: [thorb-release]
+    tags: ['thorb-v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  # Node and LGPL FFmpeg runtimes come from the official v0.1.167 installers, exactly as
+  # pc/docs/runtime-dependencies.md describes; checksums are the release's SHA256SUMS.
+  RUNTIME_RELEASE: https://github.com/ai-maker-lab/HachimoDock/releases/download/v0.1.167
+  FFMPEG_SOURCE_SHA256: 464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c
+  MAC_RUNTIME_SHA256: 845adc85834e9e23cbd6790e3e511598db47ad80e683d7eb8ef9dd3f10ac00e5
+  WIN_RUNTIME_SHA256: 5a79d40e3212ca74ba5844e9a06f1dc0f3febb9645ed62faa23fc3ba0d0a298e
+jobs:
+  installer:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: macOS-arm64
+          - os: windows-latest
+            platform: Windows-x64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: pc/package-lock.json
+      - name: Rust toolchain
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - name: Restore Cargo cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            pc/src-tauri/target
+          key: thorb-cargo-${{ matrix.platform }}-${{ hashFiles('pc/src-tauri/Cargo.lock') }}
+          restore-keys: thorb-cargo-${{ matrix.platform }}-
+      - name: Fetch verified Node / FFmpeg runtime
+        run: |
+          set -euo pipefail
+          rt="$RUNNER_TEMP/runtime"; mkdir -p "$rt"; cd "$rt"
+          sum() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
+          fetch() {
+            curl -fsSL --retry 3 -o "$1" "$RUNTIME_RELEASE/$1"
+            [ "$(sum "$1")" = "$2" ] || { echo "::error::checksum mismatch for $1"; exit 1; }
+          }
+          native() { if command -v cygpath >/dev/null; then cygpath -w "$1"; else echo "$1"; fi; }
+          fetch FFmpeg-8.1.2-source.tar.xz "$FFMPEG_SOURCE_SHA256"
+          if [ "$RUNNER_OS" = macOS ]; then
+            fetch HachimiDock_0.1.167_macOS-arm64.dmg "$MAC_RUNTIME_SHA256"
+            hdiutil attach -nobrowse -readonly -noautoopen -mountpoint "$rt/mnt" HachimiDock_0.1.167_macOS-arm64.dmg >/dev/null
+            res="$rt/mnt/HachimiDock.app/Contents/Resources"
+            cp "$res/bridge/runtime/node" node
+            for f in ffmpeg ffmpeg.LICENSE ffmpeg.README; do cp "$res/tools/$f" "$f"; done
+            hdiutil detach "$rt/mnt" -quiet
+            node_bin=node; ffmpeg_bin=ffmpeg
+          else
+            fetch HachimiDock_0.1.167_Windows-x64-setup.exe "$WIN_RUNTIME_SHA256"
+            7z x -y -oinstaller HachimiDock_0.1.167_Windows-x64-setup.exe >/dev/null
+            pick() { local hit; hit=$(find installer -type f -iname "$1" | head -n 1); [ -n "$hit" ] || { echo "::error::$1 not in installer"; exit 1; }; cp "$hit" "$1"; }
+            for f in node.exe ffmpeg.exe ffmpeg.LICENSE ffmpeg.README zlib.LICENSE; do pick "$f"; done
+            echo "PET_MANAGER_ZLIB_LICENSE=$(native "$rt/zlib.LICENSE")" >> "$GITHUB_ENV"
+            node_bin=node.exe; ffmpeg_bin=ffmpeg.exe
+          fi
+          {
+            echo "PET_MANAGER_NODE_BIN=$(native "$rt/$node_bin")"
+            echo "PET_MANAGER_FFMPEG_BIN=$(native "$rt/$ffmpeg_bin")"
+            echo "PET_MANAGER_FFMPEG_README=$(native "$rt/ffmpeg.README")"
+            echo "PET_MANAGER_FFMPEG_LICENSE=$(native "$rt/ffmpeg.LICENSE")"
+            echo "PET_MANAGER_FFMPEG_SOURCE_ARCHIVE=$(native "$rt/FFmpeg-8.1.2-source.tar.xz")"
+          } >> "$GITHUB_ENV"
+      - run: npm ci
+        working-directory: pc
+      - run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+        working-directory: pc/src-tauri/bridge/packages/clawd-backend-service
+      - name: Build installer
+        working-directory: pc
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = macOS ]; then
+            node scripts/prepare-desktop-resources.mjs --target macos
+            npx tauri build --bundles app,dmg --ci
+          else
+            node scripts/prepare-desktop-resources.mjs --target windows
+            npx tauri build --target x86_64-pc-windows-msvc --bundles nsis --ci
+          fi
+      - name: Save Cargo cache
+        if: always()
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            pc/src-tauri/target
+          key: thorb-cargo-${{ matrix.platform }}-${{ hashFiles('pc/src-tauri/Cargo.lock') }}-${{ github.run_id }}
+      - name: Collect installer with license and fork notice
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./pc/src-tauri/tauri.conf.json').version")
+          out=dist-thorb; mkdir -p "$out"
+          if [ "$RUNNER_OS" = macOS ]; then
+            src=$(find pc/src-tauri/target -path '*/bundle/dmg/*.dmg' | head -n 1)
+            name="HachimiDock_${version}_Thorb-fork-unofficial_macOS-arm64.dmg"
+          else
+            src=$(find pc/src-tauri/target -path '*/bundle/nsis/*-setup.exe' | head -n 1)
+            name="HachimiDock_${version}_Thorb-fork-unofficial_Windows-x64-setup.exe"
+          fi
+          [ -n "$src" ] || { echo "::error::installer not found"; exit 1; }
+          cp "$src" "$out/$name"
+          ls -la "$out"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: installer-${{ matrix.platform }}
+          path: dist-thorb/*
+          if-no-files-found: error
+  release:
+    if: startsWith(github.ref, 'refs/tags/thorb-v')
+    needs: installer
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: dist-thorb
+          merge-multiple: true
+      - name: Publish prerelease (Thorb fork, unofficial)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cp LICENSE THIRD_PARTY_NOTICES.md THORB-FORK.md dist-thorb/
+          (cd dist-thorb && sha256sum HachimiDock_* > SHA256SUMS)
+          version=$(node -p "require('./pc/src-tauri/tauri.conf.json').version")
+          gh release create "$GITHUB_REF_NAME" dist-thorb/* --repo "$GITHUB_REPOSITORY" --prerelease \
+            --title "HachimiDock ${version} · Thorb fork (unofficial / 非官方)" --notes-file THORB-FORK.md
